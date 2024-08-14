@@ -1,75 +1,134 @@
 #include "tcp-do.h"
+#include "ns3/simulator.h"
 #include "ns3/log.h"
-#include <algorithm>
+#include <algorithm> // std::max 사용
 
 namespace ns3 {
 
-NS_LOG_COMPONENT_DEFINE ("TcpDo");
-NS_OBJECT_ENSURE_REGISTERED (TcpDo);
+NS_LOG_COMPONENT_DEFINE("TcpDo");
 
-TypeId
-TcpDo::GetTypeId (void)
+NS_OBJECT_ENSURE_REGISTERED(TcpDo);
+
+TypeId TcpDo::GetTypeId(void)
 {
-  static TypeId tid = TypeId ("ns3::TcpDo")
-    .SetParent<TcpCongestionOps> ()
-    .SetGroupName ("Internet")
-    .AddConstructor<TcpDo> ();
-  return tid;
+    static TypeId tid = TypeId("ns3::TcpDo")
+        .SetParent<TcpVegas>()
+        .SetGroupName("Internet")
+        .AddConstructor<TcpDo>()
+        .AddAttribute("CongestionThreshold", "The threshold for oscillation frequency to detect congestion",
+                      DoubleValue(0.0005), // 임계값을 설정하여 민감도 조정
+                      MakeDoubleAccessor(&TcpDo::m_congestionThreshold),
+                      MakeDoubleChecker<double>());
+    return tid;
 }
 
-TcpDo::TcpDo (void)
-  : m_prevRtt(0.0),
-    m_oscillationThreshold(0.05),
-    m_congestionWindowDelta(0.0)
+TcpDo::TcpDo()
+    : m_congestionThreshold(0.0005),  // 초기화
+      m_lastOscillationFrequency(0.0) // 초기화
 {
 }
 
-TcpDo::~TcpDo (void)
+TcpDo::TcpDo(const TcpDo& sock)
+    : TcpVegas(sock),
+      m_congestionThreshold(sock.m_congestionThreshold),
+      m_lastOscillationFrequency(sock.m_lastOscillationFrequency)
 {
 }
 
-std::string
-TcpDo::GetName () const
+TcpDo::~TcpDo() {}
+
+std::string TcpDo::GetName() const
 {
-  return "TcpDo";
+    return "TcpDo";
 }
 
-void
-TcpDo::IncreaseWindow (Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
+void TcpDo::PktsAcked(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked, const Time& rtt)
 {
-  // 현재 RTT 측정
-  double currentRtt = tcb->m_lastRtt.Get().GetSeconds(); // RTT 값을 가져오는 방법 수정
+    TcpVegas::PktsAcked(tcb, segmentsAcked, rtt);
+    CalculateOscillationFrequency(rtt);
+}
 
-  // RTT 오실레이션 감지
-  m_congestionWindowDelta = currentRtt - m_prevRtt;
+void TcpDo::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
+{
+    bool vegasDetectedCongestion = (tcb->m_cWnd.Get() > tcb->m_ssThresh);
+    double currentOscillationFrequency = m_lastOscillationFrequency;
+    bool frequencyDetectedCongestion = (currentOscillationFrequency > m_congestionThreshold);
 
-  // 오실레이션이 임계값을 초과하면 혼잡으로 간주
-  if (std::abs(m_congestionWindowDelta) > m_oscillationThreshold)
+    if (vegasDetectedCongestion || frequencyDetectedCongestion)
     {
-      // 혼잡 발생 시 창 크기를 줄임
-      tcb->m_cWnd = std::max (tcb->m_cWnd.Get() * 0.9, double(tcb->m_segmentSize * 2));
+        NS_LOG_INFO("Congestion detected by Vegas or Oscillation Frequency: Reducing cwnd");
+
+        uint32_t newCwnd;
+        if (frequencyDetectedCongestion)
+        {
+            double severity = currentOscillationFrequency / m_congestionThreshold;
+            NS_LOG_UNCOND("Calculated severity of congestion: " << severity);
+
+            // 혼잡이 심각할수록 더 많이 줄이기 위해 감소 인자를 조정
+            double reductionFactor;
+            if (severity > 20) {
+                reductionFactor = 0.001;  // 매우 심각한 혼잡 - 거의 모든 대역폭을 차단
+            } else if (severity > 10) {
+                reductionFactor = 0.01;  // 심각한 혼잡 - 99% 감소
+            } else {
+                reductionFactor = 0.05;  // 중간 정도의 혼잡 - 95% 감소
+            }
+
+            // 새로운 cwnd를 계산, 최소 cwnd를 설정하여 과도한 감소 방지
+            newCwnd = std::max(static_cast<uint32_t>(tcb->m_cWnd.Get() * reductionFactor), tcb->m_segmentSize * 10);
+            NS_LOG_INFO("High oscillation frequency detected: Reducing cwnd by factor " << reductionFactor);
+        }
+        else
+        {
+            // Vegas에 의해 감지된 혼잡에 대해서는 기본적인 감소 처리
+            newCwnd = std::max(tcb->m_cWnd.Get() / 2, tcb->m_segmentSize * 10);
+            NS_LOG_INFO("Vegas detected congestion: Decreasing cwnd");
+        }
+
+        tcb->m_ssThresh = newCwnd;  // 혼잡 후 바로 선형 증가 모드로 진입
+        tcb->m_cWnd = newCwnd;
+        NS_LOG_INFO("Congestion detected, reducing cwnd to " << newCwnd << " and avoiding slow start");
     }
-  else
+    else
     {
-      // 혼잡이 발생하지 않은 경우 창 크기를 증가
-      tcb->m_cWnd = tcb->m_cWnd.Get() + tcb->m_segmentSize * segmentsAcked;
+        NS_LOG_INFO("No congestion detected: Increasing cwnd");
+        TcpVegas::IncreaseWindow(tcb, segmentsAcked);
+    }
+}
+
+void TcpDo::CalculateOscillationFrequency(const Time& rtt)
+{
+    static Time lastRtt = Time(0);
+    Time currentRtt = rtt;
+
+    if (lastRtt != Time(0))
+    {
+        double rttChange = (currentRtt - lastRtt).GetSeconds();
+        // 매우 작은 변동은 무시하고, 큰 변동만 반영
+        if (std::abs(rttChange) > 0.001) 
+        {
+            m_lastOscillationFrequency = std::abs(rttChange);
+        }
     }
 
-  // 이전 RTT 값 갱신
-  m_prevRtt = currentRtt;
-}
+    lastRtt = currentRtt;
 
-uint32_t
-TcpDo::GetSsThresh (Ptr<const TcpSocketState> tcb, uint32_t bytesInFlight)
-{
-  // 혼잡 발생 시 ssthresh를 설정하는 방법 - 일단 절반으로 설정
-  return std::max (2 * tcb->m_segmentSize, tcb->m_cWnd.Get() / 2);
-}
+    m_rttHistory.push_back(rtt);
 
-Ptr<TcpCongestionOps>
-TcpDo::Fork ()
-{
-  return CreateObject<TcpDo> ();
+    if (m_rttHistory.size() > 20) // 더 많은 샘플을 고려하여 진동 주파수 계산
+    {
+        m_rttHistory.pop_front();
+    }
+
+    if (m_rttHistory.size() < 2) return;
+
+    double sum = 0.0;
+    for (size_t i = 1; i < m_rttHistory.size(); ++i)
+    {
+        sum += std::abs(m_rttHistory[i].GetSeconds() - m_rttHistory[i - 1].GetSeconds());
+    }
+
+    m_lastOscillationFrequency = sum / (m_rttHistory.size() - 1);
 }
 
 } // namespace ns3

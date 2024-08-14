@@ -6,12 +6,12 @@
 
 using namespace ns3;
 
-NS_LOG_COMPONENT_DEFINE("TcpDoFrequencyTest");
+NS_LOG_COMPONENT_DEFINE("TcpVegasCongestionTest1Gbps");
 
 // RTT를 추적하고 파일에 기록하는 함수
 void RttTracer(Time oldRtt, Time newRtt)
 {
-    static std::ofstream rttFile("rtt-oscillation-frequency-do.csv", std::ios::out | std::ios::app);
+    static std::ofstream rttFile("rtt-oscillation-vegas-1Gbps.csv", std::ios::out | std::ios::app);
     static double startTime = Simulator::Now().GetSeconds();
 
     double currentTime = Simulator::Now().GetSeconds() - startTime;
@@ -30,25 +30,19 @@ void SetupRttTracer(Ptr<Node> node)
 
 int main(int argc, char *argv[])
 {
-    double simulationTime = 10.0;  // 시뮬레이션 시간을 20초로 증가
+    double simulationTime = 10.0;
 
     // 로그 활성화
-    LogComponentEnable("TcpDoFrequencyTest", LOG_LEVEL_INFO);
+    LogComponentEnable("TcpVegasCongestionTest1Gbps", LOG_LEVEL_INFO);
 
     // 노드 생성
     NodeContainer nodes;
     nodes.Create(2);
 
-    // 포인트 투 포인트 링크 설정 (중간 대역폭, 가변 지연)
+    // 포인트 투 포인트 링크 설정 (중간 대역폭, 고정 지연)
     PointToPointHelper pointToPoint;
     pointToPoint.SetDeviceAttribute("DataRate", StringValue("1Gbps"));
-
-    // 가변 지연을 추가하기 위해 UniformRandomVariable 사용
-    Ptr<UniformRandomVariable> uv = CreateObject<UniformRandomVariable>();
-    uv->SetAttribute("Min", DoubleValue(20)); // 최소 지연 20ms (더 낮게 설정)
-    uv->SetAttribute("Max", DoubleValue(80)); // 최대 지연 80ms (더 높게 설정)
-
-    pointToPoint.SetChannelAttribute("Delay", TimeValue(MilliSeconds(uv->GetValue())));
+    pointToPoint.SetChannelAttribute("Delay", StringValue("50ms"));
 
     NetDeviceContainer devices = pointToPoint.Install(nodes);
 
@@ -61,9 +55,9 @@ int main(int argc, char *argv[])
     address.SetBase("10.1.1.0", "255.255.255.0");
     Ipv4InterfaceContainer interfaces = address.Assign(devices);
 
-    // TCP-Do 설정
-    TypeId tcpDoTypeId = TypeId::LookupByName("ns3::TcpDo");
-    Config::Set("/NodeList/*/$ns3::TcpL4Protocol/SocketType", TypeIdValue(tcpDoTypeId));
+    // TCP-BBR 설정
+    TypeId tcpVegasTypeId = TypeId::LookupByName("ns3::TcpVegas");
+    Config::Set("/NodeList/*/$ns3::TcpL4Protocol/SocketType", TypeIdValue(tcpVegasTypeId));
 
     // 애플리케이션 설정 (TCP 트래픽 생성)
     uint16_t sinkPort = 8080;
@@ -75,10 +69,10 @@ int main(int argc, char *argv[])
 
     // 혼잡 유도를 위해 OnOffHelper를 사용하여 간헐적으로 높은 트래픽 발생
     OnOffHelper onOffHelper("ns3::TcpSocketFactory", sinkAddress);
-    onOffHelper.SetAttribute("DataRate", StringValue("2Gbps")); // 더 높은 데이터 속도
+    onOffHelper.SetAttribute("DataRate", StringValue("0.5Gbps"));
     onOffHelper.SetAttribute("PacketSize", UintegerValue(1024));
-    onOffHelper.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=0.5]"));
-    onOffHelper.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.5]"));
+    onOffHelper.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=0.3]"));
+    onOffHelper.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.7]"));
     ApplicationContainer clientApp = onOffHelper.Install(nodes.Get(0));
     clientApp.Start(Seconds(1.0));
     clientApp.Stop(Seconds(simulationTime));

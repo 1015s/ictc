@@ -6,12 +6,12 @@
 
 using namespace ns3;
 
-NS_LOG_COMPONENT_DEFINE("TcpDoFrequencyTest");
+NS_LOG_COMPONENT_DEFINE("TcpBBRFrequencyTest");
 
 // RTT를 추적하고 파일에 기록하는 함수
 void RttTracer(Time oldRtt, Time newRtt)
 {
-    static std::ofstream rttFile("rtt-oscillation-frequency-do.csv", std::ios::out | std::ios::app);
+    static std::ofstream rttFile("rtt-oscillation-frequency-bbr.csv", std::ios::out | std::ios::app);
     static double startTime = Simulator::Now().GetSeconds();
 
     double currentTime = Simulator::Now().GetSeconds() - startTime;
@@ -30,10 +30,10 @@ void SetupRttTracer(Ptr<Node> node)
 
 int main(int argc, char *argv[])
 {
-    double simulationTime = 10.0;  // 시뮬레이션 시간을 20초로 증가
+    double simulationTime = 20.0;  // 시뮬레이션 시간을 10초로 증가
 
     // 로그 활성화
-    LogComponentEnable("TcpDoFrequencyTest", LOG_LEVEL_INFO);
+    LogComponentEnable("TcpBBRFrequencyTest", LOG_LEVEL_INFO);
 
     // 노드 생성
     NodeContainer nodes;
@@ -61,9 +61,9 @@ int main(int argc, char *argv[])
     address.SetBase("10.1.1.0", "255.255.255.0");
     Ipv4InterfaceContainer interfaces = address.Assign(devices);
 
-    // TCP-Do 설정
-    TypeId tcpDoTypeId = TypeId::LookupByName("ns3::TcpDo");
-    Config::Set("/NodeList/*/$ns3::TcpL4Protocol/SocketType", TypeIdValue(tcpDoTypeId));
+    // TCP-BBR 설정
+    TypeId tcpBbrTypeId = TypeId::LookupByName("ns3::TcpBbr");
+    Config::Set("/NodeList/*/$ns3::TcpL4Protocol/SocketType", TypeIdValue(tcpBbrTypeId));
 
     // 애플리케이션 설정 (TCP 트래픽 생성)
     uint16_t sinkPort = 8080;

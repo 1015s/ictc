@@ -1,27 +1,50 @@
 #ifndef TCP_DO_H
 #define TCP_DO_H
 
-#include "ns3/tcp-congestion-ops.h"
-#include "ns3/tcp-socket-state.h"
+#include "ns3/tcp-vegas.h"
+#include "ns3/simulator.h"
+#include "ns3/log.h"
+#include <deque>
 
 namespace ns3 {
 
-class TcpDo : public TcpCongestionOps
+/**
+ * \brief TcpDo implements a custom TCP congestion control algorithm
+ *        that combines elements of TCP Vegas with oscillation frequency-based
+ *        congestion detection.
+ */
+class TcpDo : public TcpVegas
 {
 public:
-  static TypeId GetTypeId (void);
-  TcpDo (void);
-  virtual ~TcpDo (void);
+    // Create TypeId for TcpDo
+    static TypeId GetTypeId(void);
 
-  virtual std::string GetName () const override;
-  virtual void IncreaseWindow (Ptr<TcpSocketState> tcb, uint32_t segmentsAcked) override;
-  virtual uint32_t GetSsThresh (Ptr<const TcpSocketState> tcb, uint32_t bytesInFlight) override;
-  virtual Ptr<TcpCongestionOps> Fork() override;  // Fork 메서드 구현
+    TcpDo(); // Default constructor
+    TcpDo(const TcpDo& sock); // Copy constructor
+    virtual ~TcpDo(); // Destructor
+
+    virtual std::string GetName() const override;
+
+protected:
+    // Override methods from TcpVegas
+    virtual void PktsAcked(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked, const Time& rtt) override;
+    virtual void IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked) override;
+
+    // Method to adjust congestion threshold
+    void AdjustCongestionThreshold(double newThreshold);
 
 private:
-  double m_prevRtt;                // 이전 RTT 값
-  double m_oscillationThreshold;   // 오실레이션을 감지하기 위한 임계값
-  double m_congestionWindowDelta;  // 혼잡 윈도우 변화량
+    // Calculate oscillation frequency based on RTT history
+    void CalculateOscillationFrequency(const Time& rtt);
+
+    // Threshold for detecting congestion based on oscillation frequency
+    double m_congestionThreshold;
+
+    // Last calculated oscillation frequency
+    double m_lastOscillationFrequency;
+
+    // History of RTT samples for oscillation frequency calculation
+    std::deque<Time> m_rttHistory;
 };
 
 } // namespace ns3
