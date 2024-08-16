@@ -22,6 +22,24 @@ void RttTracer(Time oldRtt, Time newRtt)
     NS_LOG_UNCOND("Time: " << currentTime << "s, RTT: " << rttValue << "s");
 }
 
+// Throughput을 추적하고 파일에 기록하는 함수
+void ThroughputTracer(Ptr<Application> sinkApp)
+{
+    static std::ofstream throughputFile("throughput-oscillation-frequency-vegas.csv", std::ios::out | std::ios::app);
+    static double startTime = Simulator::Now().GetSeconds();
+
+    double currentTime = Simulator::Now().GetSeconds() - startTime;
+    Ptr<PacketSink> sink = DynamicCast<PacketSink>(sinkApp);
+    double throughput = sink->GetTotalRx() * 8 / (1e6 * currentTime); // Mbps로 변환
+
+    throughputFile << currentTime << "," << throughput << std::endl;
+
+    NS_LOG_UNCOND("Time: " << currentTime << "s, Throughput: " << throughput << " Mbps");
+
+    // 1초마다 Throughput 측정
+    Simulator::Schedule(Seconds(1.0), &ThroughputTracer, sinkApp);
+}
+
 // RTT 추적기를 설정하는 함수
 void SetupRttTracer(Ptr<Node> node)
 {
@@ -30,7 +48,7 @@ void SetupRttTracer(Ptr<Node> node)
 
 int main(int argc, char *argv[])
 {
-    double simulationTime = 10.0;  // 시뮬레이션 시간을 10초로 증가
+    double simulationTime = 20.0;  // 시뮬레이션 시간을 20초로 증가
 
     // 로그 활성화
     LogComponentEnable("TcpVegasFrequencyTest", LOG_LEVEL_INFO);
@@ -75,7 +93,7 @@ int main(int argc, char *argv[])
 
     // 혼잡 유도를 위해 OnOffHelper를 사용하여 간헐적으로 높은 트래픽 발생
     OnOffHelper onOffHelper("ns3::TcpSocketFactory", sinkAddress);
-    onOffHelper.SetAttribute("DataRate", StringValue("2Gbps")); // 더 높은 데이터 속도
+    onOffHelper.SetAttribute("DataRate", StringValue("0.8Gbps")); // 더 높은 데이터 속도
     onOffHelper.SetAttribute("PacketSize", UintegerValue(1024));
     onOffHelper.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=0.5]"));
     onOffHelper.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.5]"));
@@ -85,6 +103,9 @@ int main(int argc, char *argv[])
 
     // RTT 콜백을 연결하는 이벤트 추가
     Simulator::Schedule(Seconds(1.1), &SetupRttTracer, nodes.Get(0));
+
+    // Throughput 콜백을 연결하는 이벤트 추가
+    Simulator::Schedule(Seconds(1.1), &ThroughputTracer, sinkApp.Get(0));
 
     // 시뮬레이션 실행
     Simulator::Stop(Seconds(simulationTime));

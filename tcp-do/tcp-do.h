@@ -45,6 +45,8 @@ private:
 
     // History of RTT samples for oscillation frequency calculation
     std::deque<Time> m_rttHistory;
+
+    size_t m_maxRttHistorySize;
 };
 
 } // namespace ns3
