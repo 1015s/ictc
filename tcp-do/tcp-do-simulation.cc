@@ -11,7 +11,7 @@ NS_LOG_COMPONENT_DEFINE("TcpDoFrequencyTest");
 // RTT를 추적하고 파일에 기록하는 함수
 void RttTracer(Time oldRtt, Time newRtt)
 {
-    static std::ofstream rttFile("rtt-oscillation-frequency-do.csv", std::ios::out | std::ios::app);
+    static std::ofstream rttFile("rtt-high-congestion-do.csv", std::ios::out | std::ios::app);
     static double startTime = Simulator::Now().GetSeconds();
 
     double currentTime = Simulator::Now().GetSeconds() - startTime;
@@ -19,26 +19,41 @@ void RttTracer(Time oldRtt, Time newRtt)
 
     rttFile << currentTime << "," << rttValue << std::endl;
 
-    NS_LOG_UNCOND("Time: " << currentTime << "s, RTT: " << rttValue << "s");
+    // NS_LOG_UNCOND("Time: " << currentTime << "s, RTT: " << rttValue << "s");
 }
 
 // Throughput을 추적하고 파일에 기록하는 함수
 void ThroughputTracer(Ptr<Application> sinkApp)
 {
-    static std::ofstream throughputFile("throughput-oscillation-frequency-do.csv", std::ios::out | std::ios::app);
-    static double startTime = Simulator::Now().GetSeconds();
-
-    double currentTime = Simulator::Now().GetSeconds() - startTime;
+    static std::ofstream throughputFile("throughput-high-congestion-do.csv", std::ios::out | std::ios::app);
+    static double lastTotalRx = 0;
+    static double lastTime = Simulator::Now().GetSeconds();
+    
+    double currentTime = Simulator::Now().GetSeconds();
     Ptr<PacketSink> sink = DynamicCast<PacketSink>(sinkApp);
-    double throughput = sink->GetTotalRx() * 8 / (1e6 * currentTime); // Mbps로 변환
+    double currentTotalRx = sink->GetTotalRx();
+    
+    double timeInterval = currentTime - lastTime;
 
+    // 첫 번째 호출 시 timeInterval이 0일 경우 1초로 설정
+    if (timeInterval == 0)
+    {
+        timeInterval = 1.0;
+    }
+
+    double throughput = (currentTotalRx - lastTotalRx) * 8 / (1e6 * timeInterval); // Mbps로 변환
     throughputFile << currentTime << "," << throughput << std::endl;
 
     NS_LOG_UNCOND("Time: " << currentTime << "s, Throughput: " << throughput << " Mbps");
 
+    // 상태 갱신
+    lastTotalRx = currentTotalRx;
+    lastTime = currentTime;
+
     // 1초마다 Throughput 측정
     Simulator::Schedule(Seconds(1.0), &ThroughputTracer, sinkApp);
 }
+
 
 // RTT 추적기를 설정하는 함수
 void SetupRttTracer(Ptr<Node> node)
@@ -65,8 +80,13 @@ int main(int argc, char *argv[])
     Ptr<UniformRandomVariable> uv = CreateObject<UniformRandomVariable>();
     uv->SetAttribute("Min", DoubleValue(20)); // 최소 지연 20ms (더 낮게 설정)
     uv->SetAttribute("Max", DoubleValue(80)); // 최대 지연 80ms (더 높게 설정)
+    uv->SetStream(1);
 
     pointToPoint.SetChannelAttribute("Delay", TimeValue(MilliSeconds(uv->GetValue())));
+
+    // 패킷 손실을 도입하기 위한 에러 모델 설정
+    Ptr<RateErrorModel> em = CreateObject<RateErrorModel>();
+    em->SetAttribute("ErrorRate", DoubleValue(0.01)); // 1%의 패킷 손실률 설정
 
     NetDeviceContainer devices = pointToPoint.Install(nodes);
 
@@ -79,7 +99,7 @@ int main(int argc, char *argv[])
     address.SetBase("10.1.1.0", "255.255.255.0");
     Ipv4InterfaceContainer interfaces = address.Assign(devices);
 
-    // TCP-Do 설정
+    // TCP-DO 설정
     TypeId tcpDoTypeId = TypeId::LookupByName("ns3::TcpDo");
     Config::Set("/NodeList/*/$ns3::TcpL4Protocol/SocketType", TypeIdValue(tcpDoTypeId));
 
@@ -93,10 +113,10 @@ int main(int argc, char *argv[])
 
     // 혼잡 유도를 위해 OnOffHelper를 사용하여 간헐적으로 높은 트래픽 발생
     OnOffHelper onOffHelper("ns3::TcpSocketFactory", sinkAddress);
-    onOffHelper.SetAttribute("DataRate", StringValue("0.8Gbps")); // 더 높은 데이터 속도
-    onOffHelper.SetAttribute("PacketSize", UintegerValue(1024));
-    onOffHelper.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=0.5]"));
-    onOffHelper.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.5]"));
+    onOffHelper.SetAttribute("DataRate", StringValue("2Gbps")); // 더 높은 데이터 속도
+    onOffHelper.SetAttribute("PacketSize", UintegerValue(1500));
+    onOffHelper.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=1.0]"));
+    onOffHelper.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.0]"));
     ApplicationContainer clientApp = onOffHelper.Install(nodes.Get(0));
     clientApp.Start(Seconds(1.0));
     clientApp.Stop(Seconds(simulationTime));

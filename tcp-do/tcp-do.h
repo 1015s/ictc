@@ -47,6 +47,10 @@ private:
     std::deque<Time> m_rttHistory;
 
     size_t m_maxRttHistorySize;
+    uint32_t m_oscillationCount;
+    Time m_timeWindow;
+    Time m_lastCalculationTime;                // 마지막으로 진동수가 계산된 시간
+    Time m_baseRtt;                            // 최소 RTT 값 (기준 RTT)
 };
 
 } // namespace ns3

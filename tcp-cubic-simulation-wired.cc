@@ -6,11 +6,11 @@
 
 using namespace ns3;
 
-NS_LOG_COMPONENT_DEFINE("TcpBbrWirelessScenario");
+NS_LOG_COMPONENT_DEFINE("TcpCubicWiredScenario");
 
 void RttTracer(Time oldRtt, Time newRtt)
 {
-    static std::ofstream rttFile("rtt-wireless-router-bbr.csv", std::ios::out | std::ios::app);
+    static std::ofstream rttFile("rtt-wired-router-cubic.csv", std::ios::out | std::ios::app);
     static double startTime = Simulator::Now().GetSeconds();
 
     double currentTime = Simulator::Now().GetSeconds() - startTime;
@@ -26,7 +26,7 @@ void SetupRttTracer(Ptr<Node> node)
 
 void ThroughputTracer(Ptr<Application> sinkApp)
 {
-    static std::ofstream throughputFile("throughput-wireless-router-bbr.csv", std::ios::out | std::ios::app);
+    static std::ofstream throughputFile("throughput-wired-router-cubic.csv", std::ios::out | std::ios::app);
     static double lastTotalRx = 0;
     static double lastTime = Simulator::Now().GetSeconds();
 
@@ -55,7 +55,7 @@ int main(int argc, char *argv[])
 {
     double simulationTime = 20.0;
 
-    LogComponentEnable("TcpBbrWirelessScenario", LOG_LEVEL_INFO);
+    LogComponentEnable("TcpCubicWiredScenario", LOG_LEVEL_INFO);
 
     NodeContainer sender, receiver, routerNode;
     sender.Create(1);
@@ -63,33 +63,15 @@ int main(int argc, char *argv[])
     routerNode.Create(1);
 
     NodeContainer trafficSenders;
-    trafficSenders.Create(59);
+    trafficSenders.Create(29);
 
     PointToPointHelper pointToPoint;
     pointToPoint.SetDeviceAttribute("DataRate", StringValue("1Gbps"));
-    //pointToPoint.SetChannelAttribute("Delay", StringValue("2ms")); // 링크 지연 시간을 2ms로 변경하여 테스트
+    pointToPoint.SetChannelAttribute("Delay", StringValue("2ms")); // 링크 지연 시간을 2ms로 변경하여 테스트
     pointToPoint.SetQueue("ns3::DropTailQueue", "MaxSize", StringValue("1000p"));
-
-    // 랜덤 지연 생성: 고정된 시드를 사용하여 평균이 0.5ms인 지연 값
-    Ptr<UniformRandomVariable> randomDelay = CreateObject<UniformRandomVariable>();
-    randomDelay->SetAttribute("Min", DoubleValue(0.5));
-    randomDelay->SetAttribute("Max", DoubleValue(1.0));  // 0.5ms ~ 1.5ms 사이의 랜덤 지연
-    randomDelay->SetStream(1);  // 스트림 번호를 설정하여 항상 동일한 난수 시퀀스를 생성
 
     NetDeviceContainer senderToRouter = pointToPoint.Install(sender.Get(0), routerNode.Get(0));
     NetDeviceContainer routerToReceiver = pointToPoint.Install(routerNode.Get(0), receiver.Get(0));
-
-    // 각 링크의 채널에 랜덤 지연 설정
-    Ptr<PointToPointChannel> channel1 = DynamicCast<PointToPointChannel>(senderToRouter.Get(0)->GetChannel());
-    channel1->SetAttribute("Delay", TimeValue(MicroSeconds(randomDelay->GetValue() * 1000)));
-
-    Ptr<PointToPointChannel> channel2 = DynamicCast<PointToPointChannel>(routerToReceiver.Get(0)->GetChannel());
-    channel2->SetAttribute("Delay", TimeValue(MicroSeconds(randomDelay->GetValue() * 1000)));
-
-    // Error model to induce packet loss on the main link
-    Ptr<RateErrorModel> em = CreateObject<RateErrorModel>();
-    em->SetAttribute("ErrorRate", DoubleValue(0.000001)); // 오류율을 높여 패킷 손실 증가
-    routerToReceiver.Get(1)->SetAttribute("ReceiveErrorModel", PointerValue(em));
 
     InternetStackHelper stack;
     stack.Install(sender);
@@ -106,8 +88,8 @@ int main(int argc, char *argv[])
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
-    TypeId tcpBbrTypeId = TypeId::LookupByName("ns3::TcpBbr");
-    Config::Set("/NodeList/*/$ns3::TcpL4Protocol/SocketType", TypeIdValue(tcpBbrTypeId));
+    TypeId tcpCubicTypeId = TypeId::LookupByName("ns3::TcpCubic");
+    Config::Set("/NodeList/*/$ns3::TcpL4Protocol/SocketType", TypeIdValue(tcpCubicTypeId));
 
     uint16_t sinkPort = 8080;
     Address sinkAddress(InetSocketAddress(routerReceiverInterfaces.GetAddress(1), sinkPort));
@@ -125,20 +107,13 @@ int main(int argc, char *argv[])
     clientApp.Start(Seconds(1.0));
     clientApp.Stop(Seconds(simulationTime));
 
-    // Traffic to Router only
-    uint16_t routerSinkPort = 8081;
-    Address routerSinkAddress(InetSocketAddress(senderRouterInterfaces.GetAddress(1), routerSinkPort));
-    PacketSinkHelper routerPacketSinkHelper("ns3::TcpSocketFactory", routerSinkAddress);
-    ApplicationContainer routerSinkApp = routerPacketSinkHelper.Install(routerNode.Get(0));
-    routerSinkApp.Start(Seconds(0.0));
-    routerSinkApp.Stop(Seconds(simulationTime));
-
     for (uint32_t i = 0; i < trafficSenders.GetN(); ++i)
     {
-        OnOffHelper trafficOnOffHelper("ns3::TcpSocketFactory", routerSinkAddress);
+        OnOffHelper trafficOnOffHelper("ns3::TcpSocketFactory", sinkAddress);
         trafficOnOffHelper.SetAttribute("DataRate", StringValue("500Mbps"));
         trafficOnOffHelper.SetAttribute("PacketSize", UintegerValue(1024));
-
+        
+        // 다양한 On/Off 시간 설정
         Ptr<ExponentialRandomVariable> onTimeVar = CreateObject<ExponentialRandomVariable>();
         onTimeVar->SetAttribute("Mean", DoubleValue(0.5));
         trafficOnOffHelper.SetAttribute("OnTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
@@ -148,6 +123,7 @@ int main(int argc, char *argv[])
         trafficOnOffHelper.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
         ApplicationContainer trafficApp = trafficOnOffHelper.Install(trafficSenders.Get(i));
 
+        // 시작 시간을 랜덤하게 설정하여 변동성 증가
         Ptr<UniformRandomVariable> startVar = CreateObject<UniformRandomVariable>();
         startVar->SetAttribute("Min", DoubleValue(0.0));
         startVar->SetAttribute("Max", DoubleValue(1.0));

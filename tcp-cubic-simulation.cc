@@ -6,11 +6,11 @@
 
 using namespace ns3;
 
-NS_LOG_COMPONENT_DEFINE("TcpBbrWirelessScenario");
+NS_LOG_COMPONENT_DEFINE("TcpCubicWirelessScenario");
 
 void RttTracer(Time oldRtt, Time newRtt)
 {
-    static std::ofstream rttFile("rtt-wireless-router-bbr.csv", std::ios::out | std::ios::app);
+    static std::ofstream rttFile("rtt-wireless-router-cubic.csv", std::ios::out | std::ios::app);
     static double startTime = Simulator::Now().GetSeconds();
 
     double currentTime = Simulator::Now().GetSeconds() - startTime;
@@ -26,7 +26,7 @@ void SetupRttTracer(Ptr<Node> node)
 
 void ThroughputTracer(Ptr<Application> sinkApp)
 {
-    static std::ofstream throughputFile("throughput-wireless-router-bbr.csv", std::ios::out | std::ios::app);
+    static std::ofstream throughputFile("throughput-wireless-router-cubic.csv", std::ios::out | std::ios::app);
     static double lastTotalRx = 0;
     static double lastTime = Simulator::Now().GetSeconds();
 
@@ -55,7 +55,7 @@ int main(int argc, char *argv[])
 {
     double simulationTime = 20.0;
 
-    LogComponentEnable("TcpBbrWirelessScenario", LOG_LEVEL_INFO);
+    LogComponentEnable("TcpCubicWirelessScenario", LOG_LEVEL_INFO);
 
     NodeContainer sender, receiver, routerNode;
     sender.Create(1);
@@ -106,8 +106,8 @@ int main(int argc, char *argv[])
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
-    TypeId tcpBbrTypeId = TypeId::LookupByName("ns3::TcpBbr");
-    Config::Set("/NodeList/*/$ns3::TcpL4Protocol/SocketType", TypeIdValue(tcpBbrTypeId));
+    TypeId tcpCubicTypeId = TypeId::LookupByName("ns3::TcpCubic");
+    Config::Set("/NodeList/*/$ns3::TcpL4Protocol/SocketType", TypeIdValue(tcpCubicTypeId));
 
     uint16_t sinkPort = 8080;
     Address sinkAddress(InetSocketAddress(routerReceiverInterfaces.GetAddress(1), sinkPort));
@@ -135,7 +135,7 @@ int main(int argc, char *argv[])
 
     for (uint32_t i = 0; i < trafficSenders.GetN(); ++i)
     {
-        OnOffHelper trafficOnOffHelper("ns3::TcpSocketFactory", routerSinkAddress);
+        OnOffHelper trafficOnOffHelper("ns3::TcpSocketFactory", sinkAddress);
         trafficOnOffHelper.SetAttribute("DataRate", StringValue("500Mbps"));
         trafficOnOffHelper.SetAttribute("PacketSize", UintegerValue(1024));
 
