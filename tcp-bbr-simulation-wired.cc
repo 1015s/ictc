@@ -6,11 +6,11 @@
 
 using namespace ns3;
 
-NS_LOG_COMPONENT_DEFINE("TcpBbrWiredScenario");
+NS_LOG_COMPONENT_DEFINE("TcpBbrSimulation");
 
 void RttTracer(Time oldRtt, Time newRtt)
 {
-    static std::ofstream rttFile("rtt-wired-router-bbr.csv", std::ios::out | std::ios::app);
+    static std::ofstream rttFile("rtt-tcpbbr.csv", std::ios::out | std::ios::app);
     static double startTime = Simulator::Now().GetSeconds();
 
     double currentTime = Simulator::Now().GetSeconds() - startTime;
@@ -26,7 +26,7 @@ void SetupRttTracer(Ptr<Node> node)
 
 void ThroughputTracer(Ptr<Application> sinkApp)
 {
-    static std::ofstream throughputFile("throughput-wired-router-bbr.csv", std::ios::out | std::ios::app);
+    static std::ofstream throughputFile("throughput-tcpbbr.csv", std::ios::out | std::ios::app);
     static double lastTotalRx = 0;
     static double lastTime = Simulator::Now().GetSeconds();
 
@@ -55,85 +55,126 @@ int main(int argc, char *argv[])
 {
     double simulationTime = 20.0;
 
-    LogComponentEnable("TcpBbrWiredScenario", LOG_LEVEL_INFO);
+    LogComponentEnable("TcpBbrSimulation", LOG_LEVEL_INFO);
 
+    // TCP Do 사용 설정
+    TypeId tcpTypeId = TypeId::LookupByName("ns3::TcpBbr");
+    Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(tcpTypeId));
+
+    // 네트워크 노드 생성
     NodeContainer sender, receiver, routerNode;
     sender.Create(1);
     receiver.Create(1);
     routerNode.Create(1);
 
     NodeContainer trafficSenders;
-    trafficSenders.Create(29);
+    trafficSenders.Create(19);
 
+    // 링크 설정
     PointToPointHelper pointToPoint;
     pointToPoint.SetDeviceAttribute("DataRate", StringValue("1Gbps"));
-    pointToPoint.SetChannelAttribute("Delay", StringValue("2ms")); // 링크 지연 시간을 2ms로 변경하여 테스트
-    pointToPoint.SetQueue("ns3::DropTailQueue", "MaxSize", StringValue("1000p"));
+    pointToPoint.SetChannelAttribute("Delay", StringValue("2ms")); // 기본 지연
 
+    // 공유 링크 설정: router에서 receiver까지
+    PointToPointHelper sharedLink;
+    sharedLink.SetDeviceAttribute("DataRate", StringValue("1Gbps"));
+    sharedLink.SetChannelAttribute("Delay", StringValue("2ms"));
+
+    // sender에서 router까지의 링크
     NetDeviceContainer senderToRouter = pointToPoint.Install(sender.Get(0), routerNode.Get(0));
-    NetDeviceContainer routerToReceiver = pointToPoint.Install(routerNode.Get(0), receiver.Get(0));
 
+    // trafficSenders에서 router까지의 링크
+    NetDeviceContainer trafficSenderToRouter[19];
+    for (uint32_t i = 0; i < trafficSenders.GetN(); ++i)
+    {
+        trafficSenderToRouter[i] = pointToPoint.Install(trafficSenders.Get(i), routerNode.Get(0));
+    }
+
+    // router에서 receiver까지의 공유 링크
+    NetDeviceContainer routerToReceiver = sharedLink.Install(routerNode.Get(0), receiver.Get(0));
+
+    // 인터넷 스택 설치
     InternetStackHelper stack;
     stack.Install(sender);
     stack.Install(receiver);
     stack.Install(routerNode);
     stack.Install(trafficSenders);
 
+    // IP 주소 할당
     Ipv4AddressHelper address;
     address.SetBase("10.1.1.0", "255.255.255.0");
     Ipv4InterfaceContainer senderRouterInterfaces = address.Assign(senderToRouter);
 
-    address.SetBase("10.1.2.0", "255.255.255.0");
+    for (uint32_t i = 0; i < trafficSenders.GetN(); ++i)
+    {
+        std::ostringstream subnet;
+        subnet << "10.1." << i + 2 << ".0";
+        address.SetBase(subnet.str().c_str(), "255.255.255.0");
+        address.Assign(trafficSenderToRouter[i]);
+    }
+
+    address.SetBase("10.1.100.0", "255.255.255.0");
     Ipv4InterfaceContainer routerReceiverInterfaces = address.Assign(routerToReceiver);
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
-    TypeId tcpBbrTypeId = TypeId::LookupByName("ns3::TcpBbr");
-    Config::Set("/NodeList/*/$ns3::TcpL4Protocol/SocketType", TypeIdValue(tcpBbrTypeId));
+    // sender 전용 수신 애플리케이션 설정 (별도 포트 사용)
+    uint16_t senderSinkPort = 8080;
+    Address senderSinkAddress(InetSocketAddress(routerReceiverInterfaces.GetAddress(1), senderSinkPort));
+    PacketSinkHelper senderPacketSinkHelper("ns3::TcpSocketFactory", senderSinkAddress);
+    ApplicationContainer senderSinkApp = senderPacketSinkHelper.Install(receiver.Get(0));
+    senderSinkApp.Start(Seconds(0.0));
+    senderSinkApp.Stop(Seconds(simulationTime));
 
-    uint16_t sinkPort = 8080;
-    Address sinkAddress(InetSocketAddress(routerReceiverInterfaces.GetAddress(1), sinkPort));
-    PacketSinkHelper packetSinkHelper("ns3::TcpSocketFactory", sinkAddress);
-    ApplicationContainer sinkApp = packetSinkHelper.Install(receiver.Get(0));
-    sinkApp.Start(Seconds(0.0));
-    sinkApp.Stop(Seconds(simulationTime));
-
-    OnOffHelper onOffHelper("ns3::TcpSocketFactory", sinkAddress);
-    onOffHelper.SetAttribute("DataRate", StringValue("500Mbps"));
+    // sender 애플리케이션 설정
+    OnOffHelper onOffHelper("ns3::TcpSocketFactory", senderSinkAddress);
+    onOffHelper.SetAttribute("DataRate", StringValue("100Mbps"));
     onOffHelper.SetAttribute("PacketSize", UintegerValue(1024));
-    onOffHelper.SetAttribute("OnTime", StringValue("ns3::ConstantRandomVariable[Constant=0.5]"));
-    onOffHelper.SetAttribute("OffTime", StringValue("ns3::ConstantRandomVariable[Constant=0.5]"));
+
+    // 변동성을 위한 랜덤 On/Off 시간 설정
+    onOffHelper.SetAttribute("OnTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
+    onOffHelper.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
+
     ApplicationContainer clientApp = onOffHelper.Install(sender.Get(0));
     clientApp.Start(Seconds(1.0));
     clientApp.Stop(Seconds(simulationTime));
 
+    // trafficSenders 애플리케이션 설정 (다른 포트 사용)
+    uint16_t trafficSinkPort = 8081;
+    Address trafficSinkAddress(InetSocketAddress(routerReceiverInterfaces.GetAddress(1), trafficSinkPort));
+    PacketSinkHelper trafficPacketSinkHelper("ns3::TcpSocketFactory", trafficSinkAddress);
+    ApplicationContainer trafficSinkApp = trafficPacketSinkHelper.Install(receiver.Get(0));
+    trafficSinkApp.Start(Seconds(0.0));
+    trafficSinkApp.Stop(Seconds(simulationTime));
+
+    // 랜덤 트래픽 패턴 설정
     for (uint32_t i = 0; i < trafficSenders.GetN(); ++i)
     {
-        OnOffHelper trafficOnOffHelper("ns3::TcpSocketFactory", sinkAddress);
-        trafficOnOffHelper.SetAttribute("DataRate", StringValue("500Mbps"));
-        trafficOnOffHelper.SetAttribute("PacketSize", UintegerValue(1024));
+        OnOffHelper trafficOnOffHelper("ns3::TcpSocketFactory", trafficSinkAddress);
         
-        // 다양한 On/Off 시간 설정
-        Ptr<ExponentialRandomVariable> onTimeVar = CreateObject<ExponentialRandomVariable>();
-        onTimeVar->SetAttribute("Mean", DoubleValue(0.5));
-        trafficOnOffHelper.SetAttribute("OnTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
+        // 각 송신 노드에 대해 다른 데이터 전송 속도를 설정
+        std::string dataRate = std::to_string(50 + (i % 5) * 50) + "Mbps";
+        trafficOnOffHelper.SetAttribute("DataRate", StringValue(dataRate));
+        trafficOnOffHelper.SetAttribute("PacketSize", UintegerValue(1024));
 
-        Ptr<ExponentialRandomVariable> offTimeVar = CreateObject<ExponentialRandomVariable>();
-        offTimeVar->SetAttribute("Mean", DoubleValue(0.5));
+        // 버스트성 트래픽 생성 (ExponentialRandomVariable 사용)
+        trafficOnOffHelper.SetAttribute("OnTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.2]"));
         trafficOnOffHelper.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
+
         ApplicationContainer trafficApp = trafficOnOffHelper.Install(trafficSenders.Get(i));
 
-        // 시작 시간을 랜덤하게 설정하여 변동성 증가
+        // 각 트래픽 노드의 시작 시간을 랜덤하게 설정
         Ptr<UniformRandomVariable> startVar = CreateObject<UniformRandomVariable>();
         startVar->SetAttribute("Min", DoubleValue(0.0));
         startVar->SetAttribute("Max", DoubleValue(1.0));
-        startVar->SetStream(1);
-        trafficApp.Start(Seconds(1.0 + startVar->GetValue())); // 랜덤 시작 시간
+        startVar->SetStream(i + 1);
+        trafficApp.Start(Seconds(1.0 + startVar->GetValue()));
         trafficApp.Stop(Seconds(simulationTime));
     }
 
+    // RTT 및 sender의 throughput 측정 시작
     Simulator::Schedule(Seconds(1.1), &SetupRttTracer, sender.Get(0));
-    Simulator::Schedule(Seconds(1.1), &ThroughputTracer, sinkApp.Get(0));
+    Simulator::Schedule(Seconds(1.1), &ThroughputTracer, senderSinkApp.Get(0)); // sender의 throughput 측정
 
     Simulator::Stop(Seconds(simulationTime));
     Simulator::Run();

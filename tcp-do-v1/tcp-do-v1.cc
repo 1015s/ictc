@@ -18,14 +18,14 @@ TypeId TcpDo::GetTypeId(void)
         .SetGroupName("Internet")
         .AddConstructor<TcpDo>()
         .AddAttribute("CongestionThreshold", "The threshold for oscillation frequency to detect congestion",
-                      DoubleValue(0.000001),
+                      DoubleValue(0.001),
                       MakeDoubleAccessor(&TcpDo::m_congestionThreshold),
                       MakeDoubleChecker<double>());
     return tid;
 }
 
 TcpDo::TcpDo()
-    : m_congestionThreshold(0.000001),
+    : m_congestionThreshold(0.001),
       m_lastOscillationFrequency(0.0),
       m_maxRttHistorySize(30),
       m_timeWindow(Seconds(0.1)),
@@ -69,6 +69,8 @@ void TcpDo::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
         return;
     }
 
+    m_congestionThreshold *= 1.01;
+
     bool vegasDetectedCongestion = (tcb->m_cWnd.Get() > tcb->m_ssThresh);
     double currentOscillationFrequency = m_lastOscillationFrequency;
     bool frequencyDetectedCongestion = (currentOscillationFrequency > m_congestionThreshold);
@@ -83,14 +85,18 @@ void TcpDo::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
 
     double dynamicRttThreshold = rttAverage + 2 * rttStdDev;
 
+    if (frequencyDetectedCongestion){
+        NS_LOG_UNCOND(currentOscillationFrequency);
+    }
+
     if (vegasDetectedCongestion || frequencyDetectedCongestion || currentRtt > dynamicRttThreshold) {
         NS_LOG_INFO("Congestion detected: Reducing cwnd based on Vegas and oscillation frequency");
 
         uint32_t newCwnd;
         double severity = currentOscillationFrequency / m_congestionThreshold;
 
-        double reductionFactor = std::max(0.5, 1.0 - severity * 0.1);
-        double recoveryFactor = std::min(1.8, 1.0 + severity * 0.1);
+        double reductionFactor = std::max(0.7, 1.0 - severity * 0.1);
+        double recoveryFactor = std::min(1.5, 1.0 + severity * 0.2);
 
         newCwnd = std::max(static_cast<uint32_t>(tcb->m_cWnd.Get() * reductionFactor), tcb->m_segmentSize * 10);
         m_congestionThreshold *= recoveryFactor;
@@ -102,7 +108,7 @@ void TcpDo::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
 
         double lowOscillationThreshold = 0.00001;
         if (currentOscillationFrequency <= lowOscillationThreshold) {
-            tcb->m_cWnd += tcb->m_segmentSize * 8;
+            tcb->m_cWnd += tcb->m_segmentSize * 7;
             m_congestionThreshold *= 0.98;
         }
 
@@ -152,7 +158,7 @@ void TcpDo::CalculateOscillationFrequency(const Time& rtt)
 
     if (lastRtt != Time(0)) {
         double rttChange = (currentRtt - lastRtt).GetSeconds();
-        if (std::abs(rttChange) > 0.000001) {
+        if (std::abs(rttChange) > 0.00001) {
             m_oscillationCount++;
         }
     }
@@ -183,7 +189,7 @@ void TcpDo::CalculateOscillationFrequency(const Time& rtt)
     double weightedSum = 0.0;
     double weightTotal = 0.0;
     double weight = 1.0;
-    double weightIncrement = 0.1;
+    double weightIncrement = 0.2;
 
     for (auto it = m_rttHistory.rbegin(); it != m_rttHistory.rend(); ++it) {
         weightedSum += it->GetSeconds() * weight;
