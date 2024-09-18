@@ -10,7 +10,7 @@ NS_LOG_COMPONENT_DEFINE("TcpCubicSimulation");
 
 void RttTracer(Time oldRtt, Time newRtt)
 {
-    static std::ofstream rttFile("rtt-tcpcubic-loss.csv", std::ios::out | std::ios::app);
+    static std::ofstream rttFile("rtt-tcpcubic-wireless.csv", std::ios::out | std::ios::app);
     static double startTime = Simulator::Now().GetSeconds();
 
     double currentTime = Simulator::Now().GetSeconds() - startTime;
@@ -26,7 +26,7 @@ void SetupRttTracer(Ptr<Node> node)
 
 void ThroughputTracer(Ptr<Application> sinkApp)
 {
-    static std::ofstream throughputFile("throughput-tcpcubic-loss.csv", std::ios::out | std::ios::app);
+    static std::ofstream throughputFile("throughput-tcpcubic-wireless.csv", std::ios::out | std::ios::app);
     static double lastTotalRx = 0;
     static double lastTime = Simulator::Now().GetSeconds();
 
@@ -68,17 +68,23 @@ int main(int argc, char *argv[])
     routerNode.Create(1);
 
     NodeContainer trafficSenders;
-    trafficSenders.Create(19);
+    trafficSenders.Create(9);
 
     // 링크 설정
     PointToPointHelper pointToPoint;
     pointToPoint.SetDeviceAttribute("DataRate", StringValue("1Gbps"));
-    pointToPoint.SetChannelAttribute("Delay", StringValue("2ms")); // 기본 지연
+
+    // NormalRandomVariable을 사용하여 지연 시간 설정
+    Ptr<NormalRandomVariable> delayVar = CreateObject<NormalRandomVariable>();
+    delayVar->SetAttribute("Mean", DoubleValue(0.5)); // 평균 10ms
+    delayVar->SetAttribute("Variance", DoubleValue(0.2)); // 분산 2ms
+
+    pointToPoint.SetChannelAttribute("Delay", TimeValue(MilliSeconds(delayVar->GetValue())));
 
     // 공유 링크 설정: router에서 receiver까지
     PointToPointHelper sharedLink;
     sharedLink.SetDeviceAttribute("DataRate", StringValue("1Gbps"));
-    sharedLink.SetChannelAttribute("Delay", StringValue("2ms"));
+    sharedLink.SetChannelAttribute("Delay", StringValue("1ms"));
 
     // 패킷 손실을 유발하는 ErrorModel 설정
     Ptr<RateErrorModel> em = CreateObject<RateErrorModel>();
@@ -89,13 +95,13 @@ int main(int argc, char *argv[])
     NetDeviceContainer senderToRouter = pointToPoint.Install(sender.Get(0), routerNode.Get(0));
 
     // trafficSenders에서 router까지의 링크
-    NetDeviceContainer trafficSenderToRouter[19];
+    NetDeviceContainer trafficSenderToRouter[9];
     for (uint32_t i = 0; i < trafficSenders.GetN(); ++i)
     {
         trafficSenderToRouter[i] = pointToPoint.Install(trafficSenders.Get(i), routerNode.Get(0));
     }
 
-    // router에서 receiver까지의 공유 링크에 ErrorModel 추가
+    // // router에서 receiver까지의 공유 링크에 ErrorModel 추가
     NetDeviceContainer routerToReceiver = sharedLink.Install(routerNode.Get(0), receiver.Get(0));
     routerToReceiver.Get(1)->SetAttribute("ReceiveErrorModel", PointerValue(em)); // 링크에 패킷 손실 모델 적용
 
@@ -134,12 +140,12 @@ int main(int argc, char *argv[])
 
     // sender 애플리케이션 설정
     OnOffHelper onOffHelper("ns3::TcpSocketFactory", senderSinkAddress);
-    onOffHelper.SetAttribute("DataRate", StringValue("100Mbps"));
+    onOffHelper.SetAttribute("DataRate", StringValue("300Mbps"));
     onOffHelper.SetAttribute("PacketSize", UintegerValue(1024));
 
     // 변동성을 위한 랜덤 On/Off 시간 설정
-    onOffHelper.SetAttribute("OnTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
-    onOffHelper.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
+    onOffHelper.SetAttribute("OnTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.1]"));
+    onOffHelper.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.2]"));
 
     ApplicationContainer clientApp = onOffHelper.Install(sender.Get(0));
     clientApp.Start(Seconds(1.0));
@@ -157,15 +163,12 @@ int main(int argc, char *argv[])
     for (uint32_t i = 0; i < trafficSenders.GetN(); ++i)
     {
         OnOffHelper trafficOnOffHelper("ns3::TcpSocketFactory", trafficSinkAddress);
-        
-        // 각 송신 노드에 대해 다른 데이터 전송 속도를 설정
-        std::string dataRate = std::to_string(50 + (i % 5) * 50) + "Mbps";
-        trafficOnOffHelper.SetAttribute("DataRate", StringValue(dataRate));
+        trafficOnOffHelper.SetAttribute("DataRate", StringValue("300Mbps"));
         trafficOnOffHelper.SetAttribute("PacketSize", UintegerValue(1024));
 
-        // 버스트성 트래픽 생성 (ExponentialRandomVariable 사용)
-        trafficOnOffHelper.SetAttribute("OnTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.2]"));
-        trafficOnOffHelper.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.5]"));
+        // 모든 노드에서 동일한 데이터 전송 속도를 사용하지만, On/Off 시간을 다르게 설정하여 변동성 추가
+        trafficOnOffHelper.SetAttribute("OnTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.1]"));
+        trafficOnOffHelper.SetAttribute("OffTime", StringValue("ns3::ExponentialRandomVariable[Mean=0.2]"));
 
         ApplicationContainer trafficApp = trafficOnOffHelper.Install(trafficSenders.Get(i));
 

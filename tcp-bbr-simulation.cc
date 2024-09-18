@@ -10,7 +10,7 @@ NS_LOG_COMPONENT_DEFINE("TcpBbrSimulation");
 
 void RttTracer(Time oldRtt, Time newRtt)
 {
-    static std::ofstream rttFile("rtt-tcpbbr-loss.csv", std::ios::out | std::ios::app);
+    static std::ofstream rttFile("rtt-tcpbbr-wireless.csv", std::ios::out | std::ios::app);
     static double startTime = Simulator::Now().GetSeconds();
 
     double currentTime = Simulator::Now().GetSeconds() - startTime;
@@ -26,7 +26,7 @@ void SetupRttTracer(Ptr<Node> node)
 
 void ThroughputTracer(Ptr<Application> sinkApp)
 {
-    static std::ofstream throughputFile("throughput-tcpbbr-loss.csv", std::ios::out | std::ios::app);
+    static std::ofstream throughputFile("throughput-tcpbbr-wireless.csv", std::ios::out | std::ios::app);
     static double lastTotalRx = 0;
     static double lastTime = Simulator::Now().GetSeconds();
 
@@ -73,12 +73,17 @@ int main(int argc, char *argv[])
     // 링크 설정
     PointToPointHelper pointToPoint;
     pointToPoint.SetDeviceAttribute("DataRate", StringValue("1Gbps"));
-    pointToPoint.SetChannelAttribute("Delay", StringValue("2ms"));
+
+    // NormalRandomVariable을 사용하여 지연 시간 설정
+    Ptr<NormalRandomVariable> delayVar = CreateObject<NormalRandomVariable>();
+    delayVar->SetAttribute("Mean", DoubleValue(0.5)); // 평균 10ms
+    delayVar->SetAttribute("Variance", DoubleValue(0.2)); // 분산 2ms
+    pointToPoint.SetChannelAttribute("Delay", TimeValue(MilliSeconds(delayVar->GetValue())));
 
     // 공유 링크 설정: router에서 receiver까지
     PointToPointHelper sharedLink;
     sharedLink.SetDeviceAttribute("DataRate", StringValue("1Gbps"));
-    sharedLink.SetChannelAttribute("Delay", StringValue("2ms"));
+    sharedLink.SetChannelAttribute("Delay", StringValue("1ms"));
 
     // 패킷 손실을 유발하는 ErrorModel 설정
     Ptr<RateErrorModel> em = CreateObject<RateErrorModel>();
@@ -134,7 +139,7 @@ int main(int argc, char *argv[])
 
     // sender 애플리케이션 설정
     OnOffHelper onOffHelper("ns3::TcpSocketFactory", senderSinkAddress);
-    onOffHelper.SetAttribute("DataRate", StringValue("100Mbps"));
+    onOffHelper.SetAttribute("DataRate", StringValue("300Mbps"));
     onOffHelper.SetAttribute("PacketSize", UintegerValue(1024));
 
     // 변동성을 위한 랜덤 On/Off 시간 설정
@@ -157,7 +162,7 @@ int main(int argc, char *argv[])
     for (uint32_t i = 0; i < trafficSenders.GetN(); ++i)
     {
         OnOffHelper trafficOnOffHelper("ns3::TcpSocketFactory", trafficSinkAddress);
-        trafficOnOffHelper.SetAttribute("DataRate", StringValue("100Mbps"));
+        trafficOnOffHelper.SetAttribute("DataRate", StringValue("300Mbps"));
         trafficOnOffHelper.SetAttribute("PacketSize", UintegerValue(1024));
 
         // 모든 노드에서 동일한 데이터 전송 속도를 사용하지만, On/Off 시간을 다르게 설정하여 변동성 추가

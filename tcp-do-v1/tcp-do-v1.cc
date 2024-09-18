@@ -83,14 +83,14 @@ void TcpDo::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
                           return acc + std::pow(val.GetSeconds() - rttAverage, 2);
                       }) / m_rttHistory.size());
 
-    double dynamicRttThreshold = rttAverage + 2 * rttStdDev;
+    double dynamicRttThreshold = rttAverage + 1.5 * rttStdDev;
 
-    if (frequencyDetectedCongestion){
+    if(frequencyDetectedCongestion){
         NS_LOG_UNCOND(currentOscillationFrequency);
     }
 
     if (vegasDetectedCongestion || frequencyDetectedCongestion || currentRtt > dynamicRttThreshold) {
-        NS_LOG_INFO("Congestion detected: Reducing cwnd based on Vegas and oscillation frequency");
+        //NS_LOG_UNCOND("Congestion detected: Reducing cwnd based on Vegas and oscillation frequency");
 
         uint32_t newCwnd;
         double severity = currentOscillationFrequency / m_congestionThreshold;
@@ -104,7 +104,7 @@ void TcpDo::IncreaseWindow(Ptr<TcpSocketState> tcb, uint32_t segmentsAcked)
         tcb->m_ssThresh = newCwnd;
         tcb->m_cWnd = newCwnd;
     } else {
-        NS_LOG_INFO("No congestion detected: Increasing cwnd cautiously");
+        //NS_LOG_UNCOND("No congestion detected: Increasing cwnd cautiously");
 
         double lowOscillationThreshold = 0.00001;
         if (currentOscillationFrequency <= lowOscillationThreshold) {
